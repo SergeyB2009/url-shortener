@@ -37,3 +37,23 @@ export const incrementClicks = async (shortCode: string): Promise<void> => {
     [shortCode]
   );
 };
+
+export const incrementClicksBy = async (
+  shortCode: string,
+  amount: number
+): Promise<void> => {
+  await pool.query(
+    'UPDATE urls SET clicks = clicks + $1 WHERE short_code = $2',
+    [amount, shortCode]
+  );
+};
+
+export const deleteByShortCode = async (
+  shortCode: string
+): Promise<boolean> => {
+  const result = await pool.query(
+    'DELETE FROM urls WHERE short_code = $1',
+    [shortCode]
+  );
+  return (result.rowCount ?? 0) > 0;
+};

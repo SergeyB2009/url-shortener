@@ -1,27 +1,7 @@
 import request from 'supertest';
 import { createApp } from '../src/app';
-import { pool } from '../src/db/pool';
-import { redis } from '../src/cache/redisClient';
 
 const app = createApp();
-
-beforeAll(async () => {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS urls (
-      id SERIAL PRIMARY KEY,
-      short_code VARCHAR(10) UNIQUE NOT NULL,
-      original_url TEXT NOT NULL,
-      clicks INTEGER DEFAULT 0,
-      created_at TIMESTAMP DEFAULT NOW()
-    );
-  `);
-});
-
-afterAll(async () => {
-  await pool.query('TRUNCATE urls RESTART IDENTITY');
-  await pool.end();
-  await redis.quit();
-});
 
 describe('POST /api/shorten', () => {
   it('should create a short URL', async () => {
@@ -38,6 +18,21 @@ describe('POST /api/shorten', () => {
       .post('/api/shorten')
       .send({ originalUrl: 'not-a-url' });
     expect(res.status).toBe(400);
+  });
+
+  it('should reject URL without http/https scheme', async () => {
+    const res = await request(app)
+      .post('/api/shorten')
+      .send({ originalUrl: 'ftp://example.com' });
+    expect(res.status).toBe(400);
+  });
+
+  it('should reject self-referencing URL (circular redirect)', async () => {
+    const res = await request(app)
+      .post('/api/shorten')
+      .send({ originalUrl: 'http://localhost:3000/abc123' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/circular/i);
   });
 });
 

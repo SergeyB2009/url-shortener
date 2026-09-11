@@ -28,8 +28,8 @@ export const redirect = async (
       return;
     }
 
-    // Защита от циклических редиректов
-    if (originalUrl.includes(`/${shortCode}`)) {
+    // Двойная защита: не редиректим на самих себя
+    if (urlService.isSelfReferencing(originalUrl)) {
       res.status(400).json({ error: 'Circular redirect detected' });
       return;
     }
@@ -58,6 +58,24 @@ export const stats = async (
       clicks: record.clicks,
       createdAt: record.created_at,
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const deleteUrl = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { shortCode } = req.params;
+    const deleted = await urlService.deleteUrl(shortCode);
+    if (!deleted) {
+      res.status(404).json({ error: 'Short code not found' });
+      return;
+    }
+    res.status(204).send();
   } catch (err) {
     next(err);
   }

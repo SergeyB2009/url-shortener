@@ -27,5 +27,8 @@ export const validateParams =
       });
       return;
     }
+    // ВАЖНО: перезаписываем req.params распарсенными данными,
+    // чтобы контроллер работал с уже валидированными значениями
+    req.params = result.data as Record<string, string>;
     next();
   };

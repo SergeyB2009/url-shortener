@@ -1,7 +1,12 @@
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
-import { shorten, redirect, stats } from './controllers/urlController';
+import {
+  shorten,
+  redirect,
+  stats,
+  deleteUrl,
+} from './controllers/urlController';
 import { validateBody, validateParams } from './middleware/validate';
 import { shortenSchema, statsSchema } from './validators/urlValidator';
 import { notFoundHandler, errorHandler } from './middleware/errorHandler';
@@ -14,13 +19,10 @@ export const createApp = (): express.Express => {
   app.use(morgan('dev'));
 
   app.post('/api/shorten', validateBody(shortenSchema), shorten);
-  app.get(
-    '/api/stats/:shortCode',
-    validateParams(statsSchema),
-    stats
-  );
+  app.get('/api/stats/:shortCode', validateParams(statsSchema), stats);
+  app.delete('/api/urls/:shortCode', validateParams(statsSchema), deleteUrl);
 
-  // Редирект — должен быть последним, чтобы не перехватывать /api/*
+  // Редирект — последним, чтобы не перехватывать /api/*
   app.get('/:shortCode', redirect);
 
   app.use(notFoundHandler);

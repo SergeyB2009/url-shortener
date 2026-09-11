@@ -26,3 +26,16 @@ export const cacheSet = async (
 export const cacheDel = async (key: string): Promise<void> => {
   await redis.del(key);
 };
+
+export const cacheIncr = async (key: string): Promise<number> => {
+  return redis.incr(key);
+};
+
+export const cacheGetNumber = async (key: string): Promise<number> => {
+  const val = await redis.get(key);
+  return val ? parseInt(val, 10) : 0;
+};
+
+export const cacheKeys = async (pattern: string): Promise<string[]> => {
+  return redis.keys(pattern);
+};
