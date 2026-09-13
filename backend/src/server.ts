@@ -13,11 +13,14 @@ const bootstrap = async (): Promise<void> => {
     console.log(`Server running on port ${config.port}`);
   });
 
-  setInterval(() => {
-    flushClicksToDb().catch((err) =>
-      console.error('[Flush] error:', err.message)
-    );
-  }, FLUSH_INTERVAL_MS);
+  // В тестах flush запускается вручную, чтобы не влиять на изоляцию.
+  if (config.nodeEnv !== 'test') {
+    setInterval(() => {
+      flushClicksToDb().catch((err) =>
+        console.error('[Flush] error:', err.message)
+      );
+    }, FLUSH_INTERVAL_MS);
+  }
 };
 
 bootstrap().catch((err) => {

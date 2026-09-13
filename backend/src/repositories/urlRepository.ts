@@ -31,13 +31,6 @@ export const insertUrl = async (
   return rows[0];
 };
 
-export const incrementClicks = async (shortCode: string): Promise<void> => {
-  await pool.query(
-    'UPDATE urls SET clicks = clicks + 1 WHERE short_code = $1',
-    [shortCode]
-  );
-};
-
 export const incrementClicksBy = async (
   shortCode: string,
   amount: number

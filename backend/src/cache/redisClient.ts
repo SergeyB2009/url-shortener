@@ -36,6 +36,33 @@ export const cacheGetNumber = async (key: string): Promise<number> => {
   return val ? parseInt(val, 10) : 0;
 };
 
-export const cacheKeys = async (pattern: string): Promise<string[]> => {
-  return redis.keys(pattern);
+/**
+ * Атомарно читает значение и удаляет ключ.
+ * Используется в flushClicksToDb, чтобы избежать race condition
+ * между чтением и удалением счётчика.
+ */
+export const cacheGetDelNumber = async (key: string): Promise<number> => {
+  const val = await redis.getdel(key);
+  return val ? parseInt(val, 10) : 0;
+};
+
+/**
+ * Возвращает ключи по паттерну через SCAN (не блокирует Redis).
+ * Для тестового задания допустимо KEYS, но SCAN безопаснее.
+ */
+export const cacheScan = async (pattern: string): Promise<string[]> => {
+  const keys: string[] = [];
+  let cursor = '0';
+  do {
+    const [nextCursor, batch] = await redis.scan(
+      cursor,
+      'MATCH',
+      pattern,
+      'COUNT',
+      100
+    );
+    cursor = nextCursor;
+    keys.push(...batch);
+  } while (cursor !== '0');
+  return keys;
 };
