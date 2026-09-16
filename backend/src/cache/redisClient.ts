@@ -31,15 +31,16 @@ export const cacheIncr = async (key: string): Promise<number> => {
   return redis.incr(key);
 };
 
-export const cacheGetNumber = async (key: string): Promise<number> => {
-  const val = await redis.get(key);
-  return val ? parseInt(val, 10) : 0;
+export const cacheIncrBy = async (
+  key: string,
+  amount: number
+): Promise<number> => {
+  return redis.incrby(key, amount);
 };
 
 /**
- * Атомарно читает значение и удаляет ключ.
- * Используется в flushClicksToDb, чтобы избежать race condition
- * между чтением и удалением счётчика.
+ * Атомарно читает значение и удаляет ключ (Redis GETDEL).
+ * Используется в flushClicksToDb.
  */
 export const cacheGetDelNumber = async (key: string): Promise<number> => {
   const val = await redis.getdel(key);
@@ -48,7 +49,6 @@ export const cacheGetDelNumber = async (key: string): Promise<number> => {
 
 /**
  * Возвращает ключи по паттерну через SCAN (не блокирует Redis).
- * Для тестового задания допустимо KEYS, но SCAN безопаснее.
  */
 export const cacheScan = async (pattern: string): Promise<string[]> => {
   const keys: string[] = [];

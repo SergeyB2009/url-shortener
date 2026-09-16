@@ -8,18 +8,15 @@ const app = createApp();
 
 describe('flushClicksToDb', () => {
   it('should move buffered clicks from Redis to DB and clear buffer', async () => {
-    // 1. Создаём ссылку
     const createRes = await request(app)
       .post('/api/shorten')
       .send({ originalUrl: 'https://example.com/flush-test' });
     const { shortCode } = createRes.body;
 
-    // 2. Делаем 3 перехода — клики буферизуются в Redis
     await request(app).get(`/${shortCode}`);
     await request(app).get(`/${shortCode}`);
     await request(app).get(`/${shortCode}`);
 
-    // Проверяем, что буфер в Redis = 3, а в БД = 0
     const bufferBefore = await redis.get(`url:clicks:${shortCode}`);
     expect(parseInt(bufferBefore ?? '0', 10)).toBe(3);
 
@@ -29,10 +26,8 @@ describe('flushClicksToDb', () => {
     );
     expect(dbBefore.rows[0].clicks).toBe(0);
 
-    // 3. Запускаем flush вручную (не ждём setInterval)
     await flushClicksToDb();
 
-    // 4. Проверяем: в БД клики появились, буфер очищен
     const dbAfter = await pool.query(
       'SELECT clicks FROM urls WHERE short_code = $1',
       [shortCode]
@@ -53,29 +48,72 @@ describe('flushClicksToDb', () => {
     await request(app).get(`/${shortCode}`);
 
     await flushClicksToDb();
-    await flushClicksToDb(); // второй раз — буфер уже пуст
+    await flushClicksToDb();
 
     const dbRow = await pool.query(
       'SELECT clicks FROM urls WHERE short_code = $1',
       [shortCode]
     );
-    expect(dbRow.rows[0].clicks).toBe(2); // не 4
+    expect(dbRow.rows[0].clicks).toBe(2);
   });
 
-  it('should keep stats correct after flush', async () => {
+  it('getStats should be read-only: not modify DB or Redis', async () => {
+    const createRes = await request(app)
+      .post('/api/shorten')
+      .send({ originalUrl: 'https://example.com/read-only-stats' });
+    const { shortCode } = createRes.body;
+
+    // Три перехода — буфер в Redis = 3, БД = 0
+    await request(app).get(`/${shortCode}`);
+    await request(app).get(`/${shortCode}`);
+    await request(app).get(`/${shortCode}`);
+
+    const dbBefore = await pool.query(
+      'SELECT clicks FROM urls WHERE short_code = $1',
+      [shortCode]
+    );
+    const bufferBefore = await redis.get(`url:clicks:${shortCode}`);
+    expect(dbBefore.rows[0].clicks).toBe(0);
+    expect(parseInt(bufferBefore ?? '0', 10)).toBe(3);
+
+    // Вызываем stats — она должна вернуть 0 + 3 = 3
+    const statsRes = await request(app).get(`/api/stats/${shortCode}`);
+    expect(statsRes.body.clicks).toBe(3);
+
+    // Проверяем, что getStats НЕ изменила ни БД, ни Redis
+    const dbAfter = await pool.query(
+      'SELECT clicks FROM urls WHERE short_code = $1',
+      [shortCode]
+    );
+    const bufferAfter = await redis.get(`url:clicks:${shortCode}`);
+    expect(dbAfter.rows[0].clicks).toBe(0);
+    expect(parseInt(bufferAfter ?? '0', 10)).toBe(3);
+  });
+
+  it('stats should remain correct after flush and new clicks', async () => {
     const createRes = await request(app)
       .post('/api/shorten')
       .send({ originalUrl: 'https://example.com/stats-after-flush' });
     const { shortCode } = createRes.body;
 
+    // 2 перехода → буфер = 2, БД = 0
     await request(app).get(`/${shortCode}`);
     await request(app).get(`/${shortCode}`);
+
+    // flush → БД = 2, буфер = 0
     await flushClicksToDb();
 
-    // Ещё один переход после flush — буфер снова наполнится
+    const dbAfterFlush = await pool.query(
+      'SELECT clicks FROM urls WHERE short_code = $1',
+      [shortCode]
+    );
+    expect(dbAfterFlush.rows[0].clicks).toBe(2);
+
+    // ещё 1 переход → буфер = 1, БД = 2
     await request(app).get(`/${shortCode}`);
 
+    // stats: 2 (из БД) + 1 (из буфера) = 3
     const statsRes = await request(app).get(`/api/stats/${shortCode}`);
-    expect(statsRes.body.clicks).toBe(3); // 2 из БД + 1 из буфера
+    expect(statsRes.body.clicks).toBe(3);
   });
 });

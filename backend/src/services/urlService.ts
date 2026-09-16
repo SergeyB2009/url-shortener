@@ -11,7 +11,7 @@ import {
   cacheSet,
   cacheDel,
   cacheIncr,
-  cacheGetNumber,
+  cacheIncrBy,
   cacheGetDelNumber,
   cacheScan,
 } from '../cache/redisClient';
@@ -89,24 +89,16 @@ export const resolveShortCode = async (
 };
 
 /**
- * Возвращает статистику.
+ * Возвращает статистику. READ-ONLY: не пишет ни в БД, ни в Redis.
  *
- * ВАЖНО про гонку: если между чтением clicks из БД и чтением буфера
- * из Redis сработает flush, то значение в БД уже включает то, что
- * было в буфере, а сам буфер обнулится. Тогда мы сложим DB + 0 — нормально.
+ * Гонка с flush: мы читаем БД и буфер отдельно, без транзакции.
+ * Узкое окно задвоения существует (если flush сработает между
+ * нашими двумя read'ами), но для MVP это допустимо — окно
+ * составляет миллисекунды, а flush идёт раз в 30 секунд.
  *
- * Обратный случай: flush начался, incrementClicksBy в БД прошёл,
- * но cacheDel ещё не сделал — тогда в буфере всё ещё лежит значение,
- * и мы сложим DB + буфер, задвоив.
- *
- * Решение: читаем буфер ДО чтения из БД. Если между ними flush сработал —
- * буфер обнулится, а DB уже содержит клики, ничего не задвоится.
- * Если flush случится после чтения буфера, но до чтения БД — буфер
- * в БД уже слит, а мы его ещё раз прибавим — снова задвоение.
- *
- * Поэтому используем GETDEL-семантику: если буфер в Redis есть — 
- * "забираем" его и добавляем к DB. flush тоже использует GETDEL,
- * так что либо мы забираем, либо flush — но не оба.
+ * Порядок чтения (БД → буфер) минимизирует окно:
+ * если flush успел до чтения БД — буфер уже 0, сумма верна.
+ * если flush идёт после чтения буфера — наши данные уже зафиксированы.
  */
 export const getStats = async (
   shortCode: string
@@ -114,13 +106,8 @@ export const getStats = async (
   const record = await findByShortCode(shortCode);
   if (!record) return null;
 
-  // Атомарно забираем буфер. Если flush уже его забрал — получим 0.
-  const buffered = await cacheGetDelNumber(`${CLICKS_PREFIX}${shortCode}`);
-
-  // Записываем в БД то, что забрали, чтобы не потерять
-  if (buffered > 0) {
-    await incrementClicksBy(shortCode, buffered);
-  }
+  const bufferedRaw = await cacheGet(`${CLICKS_PREFIX}${shortCode}`);
+  const buffered = bufferedRaw ? parseInt(bufferedRaw, 10) : 0;
 
   return { ...record, clicks: record.clicks + buffered };
 };
@@ -141,13 +128,10 @@ export const invalidateCache = async (shortCode: string): Promise<void> => {
 /**
  * Сбрасывает накопленные в Redis клики в PostgreSQL.
  *
- * Атомарность: используем GETDEL, который атомарно читает и удаляет
- * ключ. Если flush запущен параллельно с другим flush или с getStats —
- * только один получит значение, второй получит 0. Клики не задвоятся.
+ * Атомарность: GETDEL атомарно читает и удаляет ключ. Если flush
+ * запущен параллельно с другим flush — только один получит значение.
  *
- * Если процесс упадёт после GETDEL, но до incrementClicksBy —
- * клики потеряются. Это осознанный компромисс: лучше потерять один
- * интервал (≤30 секунд), чем задвоить счётчики.
+ * При ошибке БД возвращаем значение в буфер через INCRBY.
  */
 export const flushClicksToDb = async (): Promise<void> => {
   const keys = await cacheScan(`${CLICKS_PREFIX}*`);
@@ -159,12 +143,8 @@ export const flushClicksToDb = async (): Promise<void> => {
         await incrementClicksBy(shortCode, value);
         console.log(`[Flush] ${shortCode}: +${value} clicks saved to DB`);
       } catch (err) {
-        // Если БД упала — возвращаем значение в Redis, чтобы не потерять
         console.error(`[Flush] error for ${shortCode}, restoring buffer`);
-        await cacheIncr(key);
-        for (let i = 1; i < value; i++) {
-          await cacheIncr(key);
-        }
+        await cacheIncrBy(key, value);
         throw err;
       }
     }
